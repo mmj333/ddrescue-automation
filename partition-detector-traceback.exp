@@ -1,0 +1,94 @@
+#!/usr/bin/expect -f
+# Partition detector using traceback to find Windows system files
+
+set device [lindex $argv 0]
+set output_dir [lindex $argv 1]
+
+spawn python3 main.py $device -o $output_dir
+
+expect "Type*to quit:"
+send "\r"
+
+set timeout 1800
+expect "INFO:root:Analysis complete!"
+
+send "info\r"
+expect ">"
+
+# Collect partitions
+set partitions {}
+expect {
+    -re "Partition #(\[0-9\]+).*Recoverable" {
+        lappend partitions $expect_out(1,string)
+        exp_continue
+    }
+    ">" {}
+}
+
+# For each partition, look for common Windows files and traceback their paths
+set windows_partition -1
+set user_data_partition -1
+
+foreach part $partitions {
+    puts "Analyzing partition #$part..."
+    
+    # Search for common Windows files
+    send "search $part desktop.ini\r"
+    expect {
+        -timeout 5
+        -re "(\[0-9\]+)\\s+desktop.ini" {
+            set file_id $expect_out(1,string)
+            
+            # Traceback to see full path
+            send "traceback $part $file_id\r"
+            expect {
+                -re "Users|Documents and Settings" {
+                    puts "Found Users path in partition #$part!"
+                    set user_data_partition $part
+                }
+                -re "Windows|Program Files" {
+                    puts "Found Windows system path in partition #$part!"
+                    set windows_partition $part
+                }
+                ">" {}
+            }
+        }
+        ">" {
+            puts "No desktop.ini found in partition #$part"
+        }
+    }
+    
+    # Also try NTUSER.DAT (user profile indicator)
+    send "search $part NTUSER.DAT\r"
+    expect {
+        -timeout 5
+        -re "(\[0-9\]+)\\s+NTUSER\\.DAT" {
+            set file_id $expect_out(1,string)
+            
+            send "traceback $part $file_id\r"
+            expect {
+                -re "/Users/|/Documents and Settings/" {
+                    puts "Found user profile in partition #$part!"
+                    set user_data_partition $part
+                    expect ">"
+                }
+                ">" {}
+            }
+        }
+        ">" {}
+    }
+}
+
+# Decide which partition to recover
+if {$user_data_partition >= 0} {
+    puts "=== Recovering partition #$user_data_partition (has user data) ==="
+    send "restore $user_data_partition all\r"
+} elseif {$windows_partition >= 0} {
+    puts "=== Recovering partition #$windows_partition (Windows system) ==="
+    send "restore $windows_partition all\r"
+} else {
+    puts "=== Could not identify Windows partition automatically ==="
+    send "quit\r"
+}
+
+expect eof

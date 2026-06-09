@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+# Simple partition finder - just look for Users folder!
+
+set device [lindex $argv 0]
+set output_dir [lindex $argv 1]
+
+spawn python3 main.py $device -o $output_dir
+
+expect "Type*to quit:"
+send "\r"
+
+set timeout 1800
+expect "INFO:root:Analysis complete!"
+
+# Get partition list
+send "info\r"
+expect ">"
+
+# Collect all recoverable partitions
+set partitions {}
+expect {
+    -re "Partition #(\[0-9\]+).*Recoverable" {
+        lappend partitions $expect_out(1,string)
+        exp_continue
+    }
+    ">" {}
+}
+
+# Check each partition for Users folder
+set found_partition -1
+foreach part $partitions {
+    puts "Checking partition #$part for Users folder..."
+    
+    send "tree $part 2\r"
+    expect {
+        -timeout 10
+        -re "Users|Documents and Settings" {
+            puts "FOUND Users folder in partition #$part!"
+            set found_partition $part
+            expect ">"
+            break
+        }
+        ">" {
+            puts "No Users folder in partition #$part"
+        }
+        timeout {
+            puts "Timeout checking partition #$part"
+            send "\003"
+            expect ">"
+        }
+    }
+}
+
+if {$found_partition >= 0} {
+    puts "=== Best partition: #$found_partition (has Users folder) ==="
+    send "restore $found_partition all\r"
+} else {
+    puts "=== No partition with Users folder found! ==="
+    puts "Manual selection required"
+    send "quit\r"
+}
+
+expect eof

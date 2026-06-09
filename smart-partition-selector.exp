@@ -1,0 +1,97 @@
+#!/usr/bin/expect -f
+# Smart partition selector for RecuperaBit automation
+
+set device [lindex $argv 0]
+set output_dir [lindex $argv 1]
+set log_file [lindex $argv 2]
+
+# Start RecuperaBit
+spawn python3 main.py $device -o $output_dir
+
+# Wait for prompt
+expect "Type*to quit:"
+send "\r"
+
+# Wait for analysis
+set timeout 1800
+expect "INFO:root:Analysis complete!"
+
+# Get partition info
+send "info\r"
+expect ">"
+
+# Capture partition list
+set partition_list {}
+expect {
+    -re "Partition #(\[0-9\]+).*?(\[0-9\]+) files.*?Recoverable" {
+        set part_num $expect_out(1,string)
+        set file_count $expect_out(2,string)
+        lappend partition_list [list $part_num $file_count]
+        exp_continue
+    }
+    ">" {
+        # Done collecting partitions
+    }
+}
+
+# Smart selection logic
+set best_partition 0
+set best_score 0
+
+foreach part $partition_list {
+    set num [lindex $part 0]
+    set files [lindex $part 1]
+    set score 0
+    
+    # Scoring logic:
+    # - Prefer 10,000-50,000 files (typical Windows install)
+    # - Penalize > 100,000 files (likely includes deleted)
+    # - Penalize < 1,000 files (too small)
+    
+    if {$files >= 10000 && $files <= 50000} {
+        set score 100
+    } elseif {$files >= 5000 && $files <= 100000} {
+        set score 50
+    } elseif {$files > 100000} {
+        set score [expr 10 - ($files / 10000)]
+    } else {
+        set score [expr $files / 100]
+    }
+    
+    puts "Partition #$num: $files files, score: $score"
+    
+    if {$score > $best_score} {
+        set best_score $score
+        set best_partition $num
+    }
+}
+
+puts "Selected partition #$best_partition for recovery"
+
+# Now check directory structure of best partition
+send "tree $best_partition 2\r"
+set has_windows_structure 0
+expect {
+    -re "(Windows|Program Files|Users|Documents)" {
+        set has_windows_structure 1
+        exp_continue
+    }
+    ">" {
+        # Done checking structure
+    }
+}
+
+if {$has_windows_structure == 0} {
+    puts "WARNING: Selected partition may not have typical Windows structure"
+    puts "Consider manual review with 'tree' command"
+}
+
+# Proceed with recovery
+send "restore $best_partition all\r"
+
+set timeout 3600
+expect {
+    ">" { send "quit\r" }
+    timeout { send "quit\r" }
+}
+expect eof

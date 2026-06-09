@@ -1,0 +1,22 @@
+# Customer / case-specific recovery jobs (case numbers, names, recovered data)
+tickets/
+*_recovery/
+*_iterative/
+*_analysis/
+job_*/
+
+# ddrescue + recovery runtime artifacts (never commit recovered data or maps)
+*.log
+*.img
+*.raw
+*.mapfile
+recovery_state.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~

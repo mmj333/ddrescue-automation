@@ -1,0 +1,73 @@
+#!/usr/bin/expect -f
+# RecuperaBit "restore all" helper
+# Automatically finds root ID and restores everything
+
+set device [lindex $argv 0]
+set output_dir [lindex $argv 1]
+set partition [lindex $argv 2]
+
+# Default partition if not specified
+if {$partition == ""} {
+    set partition 0
+}
+
+spawn python3 main.py $device -o $output_dir
+
+expect "Type*to quit:"
+
+# Try to load saved state first
+send "load saved_scan\r"
+expect {
+    "No such" {
+        puts "No saved state, running new scan..."
+        send "\r"
+        set timeout 1800
+        expect "INFO:root:Analysis complete!"
+    }
+    "Scanner loaded" {
+        puts "Loaded saved state"
+    }
+}
+
+expect ">"
+
+# Get partition info
+send "info\r"
+expect ">"
+
+# Find root directory ID by examining tree
+send "tree $partition\r"
+
+# Capture the root ID (usually the first number we see)
+set root_id 5
+expect {
+    -re "^(\[0-9\]+) \\\[?Root\\\]?" {
+        set root_id $expect_out(1,string)
+        puts "Found root ID: $root_id"
+    }
+    -re "^(\[0-9\]+) /" {
+        set root_id $expect_out(1,string)
+        puts "Found probable root ID: $root_id"
+    }
+}
+
+expect ">"
+
+# Now restore everything from root
+puts "Restoring all files from partition $partition, root ID $root_id..."
+send "restore $partition $root_id\r"
+
+# Long timeout for restore
+set timeout 7200
+expect {
+    ">" {
+        puts "Restore completed!"
+        send "quit\r"
+    }
+    timeout {
+        puts "Restore timed out after 2 hours"
+        send "quit\r"
+    }
+}
+
+expect eof
